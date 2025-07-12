@@ -13,6 +13,7 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 SESSION_NAME = os.getenv("SESSION_NAME")
+PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
 ALPACA_URL = os.getenv("ALPACA_URL", "https://paper-api.alpaca.markets")
@@ -20,7 +21,7 @@ ALPACA_URL = os.getenv("ALPACA_URL", "https://paper-api.alpaca.markets")
 # Initialize sentiment analyzer
 analyzer = SentimentIntensityAnalyzer()
 
-# Telegram client
+# Telegram client with phone login (non-interactive)
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
 # Config
@@ -28,7 +29,6 @@ budget = 4000
 positions = {}
 used_funds = 0
 
-# Check volume (basic availability check here)
 def confirm_volume(symbol):
     url = f"{ALPACA_URL}/v2/assets/{symbol}"
     headers = {
@@ -38,7 +38,6 @@ def confirm_volume(symbol):
     r = requests.get(url, headers=headers)
     return r.ok and r.json().get("tradable", False)
 
-# Get latest price
 def get_price(symbol):
     url = f"{ALPACA_URL}/v2/stocks/{symbol}/quotes/latest"
     headers = {
@@ -50,7 +49,6 @@ def get_price(symbol):
         return float(r.json()['quote']['ap'])
     return None
 
-# Place buy order
 def place_order(symbol, qty):
     url = f"{ALPACA_URL}/v2/orders"
     headers = {
@@ -70,7 +68,6 @@ def place_order(symbol, qty):
     res = requests.post(url, headers=headers, json=data)
     print("✅ Alpaca Response:", res.json())
 
-# Place sell order
 def place_sell_order(symbol, qty):
     url = f"{ALPACA_URL}/v2/orders"
     headers = {
@@ -90,7 +87,6 @@ def place_sell_order(symbol, qty):
     res = requests.post(url, headers=headers, json=data)
     print("📤 Alpaca Sell Response:", res.json())
 
-# Monitor positions in real-time
 def monitor_positions():
     while True:
         for symbol in list(positions.keys()):
@@ -103,14 +99,12 @@ def monitor_positions():
             peak = max(pos['peak'], price)
             sentiment = pos['sentiment']
 
-            # Stop-loss
             if price <= entry:
                 print(f"🔻 Stop-loss triggered for {symbol}")
                 place_sell_order(symbol, pos['qty'])
                 del positions[symbol]
                 continue
 
-            # Take-profit (trailing)
             trail_pct = 0.2 if sentiment >= 0.9 else 0.05
             if price <= peak * (1 - trail_pct):
                 print(f"📉 Trailing take-profit triggered for {symbol}")
@@ -119,10 +113,8 @@ def monitor_positions():
                 continue
 
             positions[symbol]['peak'] = peak
-
         time.sleep(5)
 
-# Telegram message handler
 @client.on(events.NewMessage)
 async def handler(event):
     global used_funds
@@ -162,10 +154,16 @@ async def handler(event):
     positions[symbol] = {"entry": price, "qty": qty, "peak": price, "sentiment": sentiment_score}
     place_order(symbol, qty)
 
-# Start monitoring thread
+# 🔁 Start background thread
 threading.Thread(target=monitor_positions, daemon=True).start()
 
-# Run bot
-with client:
+# 🔓 Start bot with phone number (non-interactive for Railway)
+async def start_bot():
+    await client.start(phone=PHONE_NUMBER)
     print("🤖 SNIPER BOT IS LIVE AND LISTENING...")
-    client.run_until_disconnected()
+    await client.run_until_disconnected()
+
+# 🚀 Entry point
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(start_bot())
