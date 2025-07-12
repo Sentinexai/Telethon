@@ -2,33 +2,33 @@ import os
 import re
 import time
 import requests
+import asyncio
+import threading
 from datetime import datetime
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import threading
 
 # Load environment variables
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-SESSION_NAME = os.getenv("SESSION_NAME")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
 ALPACA_URL = os.getenv("ALPACA_URL", "https://paper-api.alpaca.markets")
 
-# Initialize sentiment analyzer
+# Use pre-authenticated session
+client = TelegramClient("my-trading-bot/railway", API_ID, API_HASH)
+
+# Sentiment Analyzer
 analyzer = SentimentIntensityAnalyzer()
 
-# Telegram client with phone login (non-interactive)
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-
-# Config
+# Trading config
 budget = 4000
 positions = {}
 used_funds = 0
 
+# Confirm volume
 def confirm_volume(symbol):
     url = f"{ALPACA_URL}/v2/assets/{symbol}"
     headers = {
@@ -38,6 +38,7 @@ def confirm_volume(symbol):
     r = requests.get(url, headers=headers)
     return r.ok and r.json().get("tradable", False)
 
+# Get stock price
 def get_price(symbol):
     url = f"{ALPACA_URL}/v2/stocks/{symbol}/quotes/latest"
     headers = {
@@ -49,6 +50,7 @@ def get_price(symbol):
         return float(r.json()['quote']['ap'])
     return None
 
+# Buy order
 def place_order(symbol, qty):
     url = f"{ALPACA_URL}/v2/orders"
     headers = {
@@ -68,6 +70,7 @@ def place_order(symbol, qty):
     res = requests.post(url, headers=headers, json=data)
     print("✅ Alpaca Response:", res.json())
 
+# Sell order
 def place_sell_order(symbol, qty):
     url = f"{ALPACA_URL}/v2/orders"
     headers = {
@@ -87,6 +90,7 @@ def place_sell_order(symbol, qty):
     res = requests.post(url, headers=headers, json=data)
     print("📤 Alpaca Sell Response:", res.json())
 
+# Live monitor for take-profit or stop-loss
 def monitor_positions():
     while True:
         for symbol in list(positions.keys()):
@@ -99,12 +103,14 @@ def monitor_positions():
             peak = max(pos['peak'], price)
             sentiment = pos['sentiment']
 
+            # Stop-loss
             if price <= entry:
                 print(f"🔻 Stop-loss triggered for {symbol}")
                 place_sell_order(symbol, pos['qty'])
                 del positions[symbol]
                 continue
 
+            # Trailing take-profit
             trail_pct = 0.2 if sentiment >= 0.9 else 0.05
             if price <= peak * (1 - trail_pct):
                 print(f"📉 Trailing take-profit triggered for {symbol}")
@@ -113,19 +119,21 @@ def monitor_positions():
                 continue
 
             positions[symbol]['peak'] = peak
+
         time.sleep(5)
 
+# Telegram message handler
 @client.on(events.NewMessage)
 async def handler(event):
     global used_funds
     message = event.message.message
     print(f"📨 {datetime.now().strftime('%H:%M:%S')} - {message}")
 
-    match = re.search(r'(\$?([A-Z]{2,5}))', message)
+    match = re.search(r'\$?([A-Z]{2,5})', message)
     if not match:
         return
 
-    symbol = match.group(2)
+    symbol = match.group(1)
     sentiment_score = analyzer.polarity_scores(message)['compound']
 
     if sentiment_score < 0.3:
@@ -141,9 +149,7 @@ async def handler(event):
         print("⚠️ Invalid price")
         return
 
-    alloc = budget
-    if sentiment_score < 0.6:
-        alloc *= 0.5
+    alloc = budget if sentiment_score >= 0.6 else budget * 0.5
     qty = int(alloc // price)
 
     if qty < 1:
@@ -154,16 +160,15 @@ async def handler(event):
     positions[symbol] = {"entry": price, "qty": qty, "peak": price, "sentiment": sentiment_score}
     place_order(symbol, qty)
 
-# 🔁 Start background thread
-threading.Thread(target=monitor_positions, daemon=True).start()
-
-# 🔓 Start bot with phone number (non-interactive for Railway)
+# Main function
 async def start_bot():
-    await client.start(phone=PHONE_NUMBER)
+    await client.start()
     print("🤖 SNIPER BOT IS LIVE AND LISTENING...")
     await client.run_until_disconnected()
 
-# 🚀 Entry point
+# Start monitor thread
+threading.Thread(target=monitor_positions, daemon=True).start()
+
+# Run bot
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(start_bot())
