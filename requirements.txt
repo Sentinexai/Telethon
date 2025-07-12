@@ -1,3 +1,4 @@
 telethon
 vaderSentiment
 alpaca-trade-api
+python-dotenv
