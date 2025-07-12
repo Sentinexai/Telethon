@@ -1,2 +1,5 @@
-./
-sphinx-rtd-theme~=1.3.0
+telethon
+vaderSentiment
+python-dotenv
+requests
+alpaca-trade-api
